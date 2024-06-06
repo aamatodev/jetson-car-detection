@@ -6,6 +6,12 @@ This repository contains a Dockerfile to build a Docker container for performing
 
 - Jetson Nano with JetPack 5.1 installed
 - Docker installed and configured for use with NVIDIA runtime
+- DeepStream SDK 6.2 downloaded from the [NVIDIA website](https://developer.download.nvidia.com/assets/Deepstream/DeepStream_6.2/deepstream_sdk_v6.2.0_jetson.tbz2) (may require sign-in)
+
+## Preparing the Repository
+
+1. Download the DeepStream SDK 6.2 from the [NVIDIA website](https://developer.download.nvidia.com/assets/Deepstream/DeepStream_6.2/deepstream_sdk_v6.2.0_jetson.tbz2).
+2. Place the downloaded file `deepstream_sdk_v6.2.0_jetson.tbz2` in the root folder of this repository.
 
 ## Building the Docker Image
 
@@ -28,7 +34,7 @@ docker run -it --rm --net=host --runtime nvidia aamato/ycd:latest
 Once the container is running, you need to set the video stream to perform object recognition. You can do this by making a POST request to the specified endpoint:
 
 ```sh
-curl -X POST http://10.100.5.241:5000/set-video-stream -d '{"url" : "rtmp://10.100.4.210/live/livestream"}'
+curl -X POST http://<host_ip>:5000/set-video-stream -d '{"url" : "<stream url e.g. rtmp://<stream_ip>/live/livestream>"}'
 ```
 
 ## Viewing the RTSP Stream
@@ -43,7 +49,7 @@ Replace `<host_ip>` with the IP address of your host machine.
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License. 
 
 ## Acknowledgments
 
@@ -54,4 +60,4 @@ This project is licensed under the MIT License.
 
 For any issues or questions, please open an issue on the GitHub repository.
 
----
+
