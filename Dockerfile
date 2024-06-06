@@ -166,6 +166,9 @@ COPY user_additional_install_runtime.sh \
 COPY user_deepstream_python_apps_install.sh \
 /
 
+COPY resnet10.caffemodel_b1_gpu0_int8.engine \
+     /opt/nvidia/deepstream/deepstream-6.2/samples/models/Primary_Detector/
+
 RUN cd / && \
     ./user_additional_install_runtime.sh
 

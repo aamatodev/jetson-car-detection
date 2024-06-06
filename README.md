@@ -18,7 +18,7 @@ This repository contains a Dockerfile to build a Docker container for performing
 To build the Docker image, navigate to the directory containing the Dockerfile and run the following command:
 
 ```sh
-docker build -t aamato/ycd .
+docker build -t aamatodev/car_detection_service .
 ```
 
 ## Running the Docker Container
@@ -26,7 +26,7 @@ docker build -t aamato/ycd .
 To run the Docker container, use the following command:
 
 ```sh
-docker run -it --rm --net=host --runtime nvidia aamato/ycd:latest
+docker run -it --rm --net=host --runtime nvidia aamatodev/car_detection_service
 ```
 
 ## Setting the Video Stream
