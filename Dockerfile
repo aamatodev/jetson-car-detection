@@ -173,12 +173,12 @@ RUN cd / && \
     ./user_additional_install_runtime.sh
 
 RUN cd / && \
-    ./user_deepstream_python_apps_install.sh -v 1.1.6 -b
+    ./user_deepstream_python_apps_install.sh --version 1.1.6
     
 
 COPY ./src/ /home/
 
-RUN cd /home/ && \ 
+RUN cd /home/ && \
     pip install -r requirements.txt
 
 CMD ["/bin/bash"]

@@ -24,6 +24,7 @@ import math
 import time
 from ctypes import *
 import gi
+
 gi.require_version("Gst", "1.0")
 gi.require_version("GstRtspServer", "1.0")
 from gi.repository import Gst, GstRtspServer, GLib
@@ -31,6 +32,7 @@ import configparser
 import argparse
 from common.bus_call import bus_call
 from common.is_aarch_64 import is_aarch64
+from common.FPS import PERF_DATA
 
 MAX_DISPLAY_LEN = 64
 PGIE_CLASS_ID_VEHICLE = 0
@@ -47,55 +49,8 @@ OSD_PROCESS_MODE = 0
 OSD_DISPLAY_TEXT = 0
 pgie_classes_str = ["Vehicle", "TwoWheeler", "Person", "RoadSign"]
 
-def tiler_src_pad_buffer_probe(pad, info, u_data):
-    frame_number = 0
-    num_rects = 0
-    gst_buffer = info.get_buffer()
-    if not gst_buffer:
-        print("Unable to get GstBuffer ")
-        return
 
-    batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
-    l_frame = batch_meta.frame_meta_list
-    while l_frame is not None:
-        try:
-            frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
-        except StopIteration:
-            break
 
-        frame_number = frame_meta.frame_num
-        l_obj = frame_meta.obj_meta_list
-        num_rects = frame_meta.num_obj_meta
-        obj_counter = {
-            PGIE_CLASS_ID_VEHICLE: 0,
-            PGIE_CLASS_ID_PERSON: 0,
-            PGIE_CLASS_ID_BICYCLE: 0,
-            PGIE_CLASS_ID_ROADSIGN: 0,
-        }
-        while l_obj is not None:
-            try:
-                obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
-            except StopIteration:
-                break
-            obj_counter[obj_meta.class_id] += 1
-            try:
-                l_obj = l_obj.next
-            except StopIteration:
-                break
-
-        print(
-            "Frame Number=", frame_number, 
-            "Number of Objects=", num_rects, 
-            "Vehicle_count=", obj_counter[PGIE_CLASS_ID_VEHICLE], 
-            "Person_count=", obj_counter[PGIE_CLASS_ID_PERSON]
-        )
-
-        try:
-            l_frame = l_frame.next
-        except StopIteration:
-            break
-
-    return Gst.PadProbeReturn.OK
 
 def cb_newpad(decodebin, decoder_src_pad, data):
     print("In cb_newpad\n")
@@ -117,10 +72,12 @@ def cb_newpad(decodebin, decoder_src_pad, data):
         else:
             sys.stderr.write(" Error: Decodebin did not pick nvidia decoder plugin.\n")
 
+
 def decodebin_child_added(child_proxy, Object, name, user_data):
     print("Decodebin child added:", name, "\n")
     if name.find("decodebin") != -1:
         Object.connect("child-added", decodebin_child_added, user_data)
+
 
 def create_source_bin(index, uri):
     print("Creating source bin")
@@ -146,6 +103,7 @@ def create_source_bin(index, uri):
         return None
     return nbin
 
+
 class DeepStreamApp:
     def __init__(self, args):
         self.args = args
@@ -153,12 +111,72 @@ class DeepStreamApp:
         self.bitrate = args.bitrate
         self.port = args.port
         self.gie = args.gie
+        self.num_car = 0
+        self.num_obj = 0
 
-    def run(self):
-        number_sources = len([self.args.input])
+        self.perf_data = PERF_DATA(2)
+
+    
+    def tiler_src_pad_buffer_probe(self, pad, info, u_data):
+        frame_number = 0
+        num_rects = 0
+        gst_buffer = info.get_buffer()
+        if not gst_buffer:
+            print("Unable to get GstBuffer ")
+            return
+
+        batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
+        l_frame = batch_meta.frame_meta_list
+        while l_frame is not None:
+            try:
+                frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
+            except StopIteration:
+                break
+
+            frame_number = frame_meta.frame_num
+            l_obj = frame_meta.obj_meta_list
+            num_rects = frame_meta.num_obj_meta
+            obj_counter = {
+                PGIE_CLASS_ID_VEHICLE: 0,
+                PGIE_CLASS_ID_PERSON: 0,
+                PGIE_CLASS_ID_BICYCLE: 0,
+                PGIE_CLASS_ID_ROADSIGN: 0,
+            }
+            while l_obj is not None:
+                try:
+                    obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
+                except StopIteration:
+                    break
+                obj_counter[obj_meta.class_id] += 1
+                try:
+                    l_obj = l_obj.next
+                except StopIteration:
+                    break
+
+            print(
+                "Frame Number=", frame_number,
+                "Number of Objects=", num_rects,
+                "Vehicle_count=", obj_counter[PGIE_CLASS_ID_VEHICLE],
+                "Person_count=", obj_counter[PGIE_CLASS_ID_PERSON]
+            )
+
+            self.num_obj = num_rects
+            self.num_car = obj_counter[PGIE_CLASS_ID_VEHICLE]
+
+            try:
+                l_frame = l_frame.next
+            except StopIteration:
+                break
+
+        return Gst.PadProbeReturn.OK
+
+    def get_data(self):
+        return self.num_obj, self.num_car
+
+    def run(self, url):
 
         Gst.init(None)
-
+        number_sources = 1
         print("Creating Pipeline \n ")
         pipeline = Gst.Pipeline()
         is_live = False
@@ -172,23 +190,26 @@ class DeepStreamApp:
             sys.stderr.write(" Unable to create NvStreamMux \n")
 
         pipeline.add(streammux)
-        for i in range(number_sources):
-            print("Creating source_bin ", i, " \n ")
-            uri_name = self.args.input
-            if uri_name.find("rtsp://") == 0:
-                is_live = True
-            source_bin = create_source_bin(i, uri_name)
-            if not source_bin:
-                sys.stderr.write("Unable to create source bin \n")
-            pipeline.add(source_bin)
-            padname = "sink_%u" % i
-            sinkpad = streammux.get_request_pad(padname)
-            if not sinkpad:
-                sys.stderr.write("Unable to create sink pad bin \n")
-            srcpad = source_bin.get_static_pad("src")
-            if not srcpad:
-                sys.stderr.write("Unable to create src pad bin \n")
-            srcpad.link(sinkpad)
+
+        print("Creating source_bin ", " \n ")
+        uri_name = url
+        if uri_name.find("rtsp://") == 0:
+            is_live = True
+        source_bin = create_source_bin(0, uri_name)
+        if not source_bin:
+            sys.stderr.write("Unable to create source bin \n")
+            return -1
+        pipeline.add(source_bin)
+        padname = "sink_%u" % 0
+        sinkpad = streammux.get_request_pad(padname)
+        if not sinkpad:
+            sys.stderr.write("Unable to create sink pad bin \n")
+            return -2
+        srcpad = source_bin.get_static_pad("src")
+        if not srcpad:
+            sys.stderr.write("Unable to create src pad bin \n")
+            return -3
+        srcpad.link(sinkpad)
 
         print("Creating Pgie \n ")
         if self.gie == "nvinfer":
@@ -197,22 +218,27 @@ class DeepStreamApp:
             pgie = Gst.ElementFactory.make("nvinferserver", "primary-inference")
         if not pgie:
             sys.stderr.write(" Unable to create pgie \n")
+            return -4
         print("Creating tiler \n ")
         tiler = Gst.ElementFactory.make("nvmultistreamtiler", "nvtiler")
         if not tiler:
             sys.stderr.write(" Unable to create tiler \n")
+            return -5
         print("Creating nvvidconv \n ")
         nvvidconv = Gst.ElementFactory.make("nvvideoconvert", "convertor")
         if not nvvidconv:
             sys.stderr.write(" Unable to create nvvidconv \n")
+            return -6
         print("Creating nvosd \n ")
         nvosd = Gst.ElementFactory.make("nvdsosd", "onscreendisplay")
         if not nvosd:
             sys.stderr.write(" Unable to create nvosd \n")
+            return -7
         nvvidconv_postosd = Gst.ElementFactory.make(
             "nvvideoconvert", "convertor_postosd")
         if not nvvidconv_postosd:
             sys.stderr.write(" Unable to create nvvidconv_postosd \n")
+            return -8
 
         caps = Gst.ElementFactory.make("capsfilter", "filter")
         caps.set_property(
@@ -227,6 +253,7 @@ class DeepStreamApp:
             print("Creating H265 Encoder")
         if not encoder:
             sys.stderr.write(" Unable to create encoder")
+            return -9
         encoder.set_property("bitrate", self.bitrate)
         if is_aarch64():
             encoder.set_property("preset-level", 1)
@@ -240,10 +267,12 @@ class DeepStreamApp:
             print("Creating H265 rtppay")
         if not rtppay:
             sys.stderr.write(" Unable to create rtppay")
+            return -10
 
         sink = Gst.ElementFactory.make("udpsink", "udpsink")
         if not sink:
             sys.stderr.write(" Unable to create udpsink")
+            return -11
 
         print("Playing file %s " % self.args.input)
         sink.set_property("host", self.args.host)
@@ -256,7 +285,7 @@ class DeepStreamApp:
         streammux.set_property("batch-size", number_sources)
         streammux.set_property("batched-push-timeout", MUXER_BATCH_TIMEOUT_USEC)
         pgie.set_property("config-file-path", self.args.config_file)
-        
+
         tiler_rows = int(math.sqrt(number_sources))
         tiler_columns = int(math.ceil((1.0 * number_sources) / tiler_rows))
         tiler.set_property("rows", tiler_rows)
@@ -291,6 +320,15 @@ class DeepStreamApp:
         bus.add_signal_watch()
         bus.connect("message", bus_call, loop)
 
+        pgie_src_pad = pgie.get_static_pad("src")
+        if not pgie_src_pad:
+            sys.stderr.write(" Unable to get src pad \n")
+        else:
+            pgie_src_pad.add_probe(Gst.PadProbeType.BUFFER, self.tiler_src_pad_buffer_probe, 0)
+            # perf callback function to print fps every 5 sec
+            # perf callback function to print fps every 5 sec
+            GLib.timeout_add(5000, self.perf_data.perf_print_callback)
+
         # Start streaming
         rtsp_port_num = 8554
 
@@ -321,10 +359,13 @@ class DeepStreamApp:
         # cleanup
         pipeline.set_state(Gst.State.NULL)
 
+
 if __name__ == "__main__":
+
     parser = argparse.ArgumentParser(description="RTSP Output Example")
     parser.add_argument("-i", "--input", default="rtmp://10.100.4.210/live/livestream", help="List of input URI(s)")
-    parser.add_argument("-c", "--codec", default="H264", help="RTSP Streaming Codec H264/H265", choices=["H264", "H265"])
+    parser.add_argument("-c", "--codec", default="H264", help="RTSP Streaming Codec H264/H265",
+                        choices=["H264", "H265"])
     parser.add_argument("-b", "--bitrate", default=4000000, help="Set the encoding bitrate", type=int)
     parser.add_argument("-p", "--port", default=5400, help="Port of the RTSP Video Stream", type=int)
     parser.add_argument("--gie", default="nvinfer", help="Inferencing Engine", choices=["nvinfer", "nvinferserver"])
